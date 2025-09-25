@@ -140,6 +140,11 @@ export default function LandingScreen() {
       color: colors.textSecondary,
       lineHeight: 20,
     },
+    headerRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
   });
 
   return (
@@ -151,10 +156,12 @@ export default function LandingScreen() {
               <Text style={styles.title}>{t('landing.title')}</Text>
               <Text style={styles.subtitle}>{t('landing.subtitle')}</Text>
             </View>
+            <View style={styles.headerRight}>
             <LanguageSwitcher />
             <TouchableOpacity style={styles.themeToggle} onPress={toggleTheme}>
               {isDark ? <Sun size={20} color={colors.text} /> : <Moon size={20} color={colors.text} />}
             </TouchableOpacity>
+            </View>
           </View>
         </View>
 

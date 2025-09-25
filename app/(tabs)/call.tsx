@@ -13,6 +13,8 @@ import { router } from 'expo-router';
 import { useTheme } from '@/contexts/ThemeContext';
 import { PhoneOff, Mic, MicOff, User, Volume2, Phone } from 'lucide-react-native';
 import { useLanguage } from '@/hooks/useLanguage';
+import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 
 // Call states
 const CALL_STATES = {
@@ -30,6 +32,8 @@ export default function CallScreen() {
   const [isListening, setIsListening] = useState(false);
   const [callStatus, setCallStatus] = useState(t('call.ready') || 'Ready to call');
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recordingUri, setRecordingUri] = useState<string | null>(null);
 
   const styles = StyleSheet.create({
     container: {
@@ -143,13 +147,13 @@ export default function CallScreen() {
       borderRadius: 36,
     },
     startCallButton: {
-      backgroundColor: colors.success || '#4CAF50',
+      backgroundColor: '#4CAF50',
       width: 72,
       height: 72,
       borderRadius: 36,
     },
     reconnectButton: {
-      backgroundColor: colors.warning || '#FF9800',
+      backgroundColor: '#FF9800',
       width: 72,
       height: 72,
       borderRadius: 36,
@@ -192,7 +196,7 @@ export default function CallScreen() {
     },
     reconnectText: {
       fontSize: 14,
-      color: colors.warning || '#FF9800',
+      color: '#FF9800',
       textAlign: 'center',
       marginTop: 8,
     },
@@ -218,7 +222,7 @@ export default function CallScreen() {
 
   // Handle call connection
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: ReturnType<typeof setTimeout>;
     
     if (callState === CALL_STATES.CONNECTING) {
       timer = setTimeout(() => {
@@ -229,9 +233,50 @@ export default function CallScreen() {
     return () => clearTimeout(timer);
   }, [callState]);
 
+  // Start/stop audio recording based on call connection state
+  useEffect(() => {
+    const run = async () => {
+      try {
+        if (callState === CALL_STATES.CONNECTED && !recording) {
+          const perm = await Audio.requestPermissionsAsync();
+          if (perm.status !== 'granted') {
+            Alert.alert('Microphone Permission', 'Permission to access microphone is required to record.');
+            return;
+          }
+          await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+          const { recording: rec } = await Audio.Recording.createAsync(
+            Audio.RecordingOptionsPresets.HIGH_QUALITY
+          );
+          setRecording(rec);
+          setRecordingUri(null);
+        }
+        if (callState !== CALL_STATES.CONNECTED && recording) {
+          await stopRecording();
+        }
+      } catch (e) {
+        console.log('Recording lifecycle error', e);
+      }
+    };
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callState]);
+
+  const stopRecording = async () => {
+    try {
+      if (recording) {
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        setRecording(null);
+        if (uri) setRecordingUri(uri);
+      }
+    } catch (e) {
+      console.log('stopRecording error', e);
+    }
+  };
+
   // Call duration timer
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (callState === CALL_STATES.CONNECTED) {
       interval = setInterval(() => {
         setCallDuration(prev => prev + 1);
@@ -332,12 +377,25 @@ export default function CallScreen() {
         { 
           text: "End Call", 
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
+            await stopRecording();
+            await exportAndShareRecording();
             resetCall();
           }
         }
       ]
     );
+  };
+
+  const exportAndShareRecording = async () => {
+    try {
+      if (!recordingUri) return;
+      const wavPath = `${FileSystem.cacheDirectory}call_recording_${Date.now()}.wav`;
+      await FileSystem.copyAsync({ from: recordingUri, to: wavPath });
+      Alert.alert('Recording Saved', `Saved at: ${wavPath}`);
+    } catch (e) {
+      console.log('export/share error', e);
+    }
   };
 
   const renderWaveform = () => {
