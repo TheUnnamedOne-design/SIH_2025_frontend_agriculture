@@ -17,6 +17,7 @@ import { Send, Mic, Camera, MicOff, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { apiService, type QueryRequest } from '@/services';
 
 interface Message {
   id: string;
@@ -33,6 +34,12 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const [localLangOpen, setLocalLangOpen] = useState(false);
   const [chatLanguage, setChatLanguage] = useState<string>(currentLanguage);
+  const [isLoading, setIsLoading] = useState(false);
+  const [userLocation, setUserLocation] = useState({
+    district: 'Ernakulam',
+    state: 'Kerala'
+  });
+
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -53,7 +60,6 @@ export default function ChatScreen() {
       'keyboardDidShow',
       () => {
         setKeyboardVisible(true);
-        // Scroll to bottom when keyboard appears
         setTimeout(() => {
           scrollViewRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -174,7 +180,6 @@ export default function ChatScreen() {
     messagesContainer: {
       flex: 1,
       padding: 15,
-      // paddingBottom: keyboardVisible ? 10 : 15,
     },
     messageBubble: {
       maxWidth: '80%',
@@ -252,6 +257,7 @@ export default function ChatScreen() {
     },
   });
 
+  // Modified sendMessage function with API integration
   const sendMessage = async (text: string, type: 'text' | 'image' | 'voice' = 'text') => {
     if (!text.trim()) return;
 
@@ -265,49 +271,66 @@ export default function ChatScreen() {
 
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
+    setIsLoading(true);
 
     // Scroll to bottom after sending message
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 100);
 
-    // Simulate bot response
-    setTimeout(() => {
-      const botResponse = generateBotResponse(text);
+    try {
+      // Prepare API request
+      const queryData: QueryRequest = {
+        query: text,
+        choice: 1, // 1 for farming advice, 2 for pesticide
+        district: userLocation.district,
+        state: userLocation.state,
+        current_crop: '' // Add crop selection later if needed
+      };
+
+      console.log('Sending API request:', queryData);
+
+      // Call your Flask API
+      const response = await apiService.processQuery(queryData);
+      
       const botMessage: Message = {
         id: (Date.now() + 1).toString(),
-        text: botResponse,
+        text: response.answer,
         isUser: false,
         timestamp: new Date(),
         type: 'text',
       };
+      
       setMessages(prev => [...prev, botMessage]);
+      
+    } catch (error) {
+      console.error('API Error:', error);
+      
+      // Fallback message on error
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again later.`,
+        isUser: false,
+        timestamp: new Date(),
+        type: 'text',
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
       
       // Scroll to bottom after bot response
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
-    }, 1000);
-  };
-
-  const generateBotResponse = (userMessage: string): string => {
-    const responses = [
-      "That's a great question about farming! Based on your query, I'd recommend consulting with local agricultural experts for the most accurate advice for your specific region.",
-      "For crop-related issues, it's important to consider factors like soil type, weather conditions, and local growing seasons. Would you like me to provide more specific guidance?",
-      "Farming practices can vary significantly based on your location and crop type. I suggest checking with your local agricultural extension office for personalized recommendations.",
-        t('chat.suggestion4') || "Thank you for reaching out! For the best farming advice, I recommend speaking with agricultural specialists who understand your local conditions.",
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
+    }
   };
 
   const handleVoiceInput = () => {
     if (isRecording) {
-      // Stop recording
       setIsRecording(false);
-      // Simulate voice-to-text conversion
       sendMessage("Voice message: How can I improve my crop yield?", 'voice');
     } else {
-      // Start recording
       setIsRecording(true);
       Alert.alert(
         "Voice Recording",
@@ -340,7 +363,6 @@ export default function ChatScreen() {
   };
 
   const handleInputFocus = () => {
-    // Scroll to bottom when input is focused
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
     }, 300);
@@ -360,7 +382,7 @@ export default function ChatScreen() {
       >
         <View style={styles.container}>
           <View style={styles.header}>
-          <Text style={styles.headerTitle}>{t('chat.title') || 'Farming Assistant'}</Text>
+            <Text style={styles.headerTitle}>{t('chat.title') || 'Farming Assistant'}</Text>
             <View style={styles.headerControls}>
               <TouchableOpacity
                 onPress={() => setLocalLangOpen(!localLangOpen)}
@@ -374,26 +396,26 @@ export default function ChatScreen() {
               </TouchableOpacity>
               {localLangOpen && (
                 <>
-                <TouchableOpacity
-                  activeOpacity={1}
-                  onPress={() => setLocalLangOpen(false)}
-                  style={{ position: 'absolute', left: -9999, right: -9999, top: -9999, bottom: -9999 }}
-                />
-                <View style={styles.dropdownMenu}>
-                  {availableLanguages.map((lang, idx) => (
-                    <TouchableOpacity
-                      key={lang.code}
-                      onPress={() => { setChatLanguage(lang.code); setLocalLangOpen(false); }}
-                      style={[styles.dropdownItem, idx === availableLanguages.length - 1 && { borderBottomWidth: 0 }]}
-                    >
-                      <View style={styles.languageRow}>
-                        <Text style={styles.languageFlag}>{lang.flag}</Text>
-                        <Text style={styles.languageName} numberOfLines={1}>{lang.name}</Text>
-                      </View>
-                      {chatLanguage === lang.code && <Text style={styles.dropdownItemText}>✓</Text>}
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                  <TouchableOpacity
+                    activeOpacity={1}
+                    onPress={() => setLocalLangOpen(false)}
+                    style={{ position: 'absolute', left: -9999, right: -9999, top: -9999, bottom: -9999 }}
+                  />
+                  <View style={styles.dropdownMenu}>
+                    {availableLanguages.map((lang, idx) => (
+                      <TouchableOpacity
+                        key={lang.code}
+                        onPress={() => { setChatLanguage(lang.code); setLocalLangOpen(false); }}
+                        style={[styles.dropdownItem, idx === availableLanguages.length - 1 && { borderBottomWidth: 0 }]}
+                      >
+                        <View style={styles.languageRow}>
+                          <Text style={styles.languageFlag}>{lang.flag}</Text>
+                          <Text style={styles.languageName} numberOfLines={1}>{lang.name}</Text>
+                        </View>
+                        {chatLanguage === lang.code && <Text style={styles.dropdownItemText}>✓</Text>}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </>
               )}
             </View>
@@ -435,6 +457,15 @@ export default function ChatScreen() {
                 </Text>
               </View>
             ))}
+
+            {/* Loading indicator */}
+            {isLoading && (
+              <View style={[styles.messageBubble, styles.botBubble]}>
+                <Text style={styles.botMessageText}>
+                  🤖 AI is thinking...
+                </Text>
+              </View>
+            )}
           </ScrollView>
 
           <View style={styles.inputContainer}>
@@ -475,7 +506,7 @@ export default function ChatScreen() {
             <TouchableOpacity
               style={[styles.actionButton, styles.sendButton]}
               onPress={handleSendPress}
-              disabled={!inputText.trim()}
+              disabled={!inputText.trim() || isLoading}
             >
               <Send size={20} color="#FFFFFF" />
             </TouchableOpacity>
