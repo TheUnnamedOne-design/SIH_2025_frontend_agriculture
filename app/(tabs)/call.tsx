@@ -7,14 +7,16 @@ import {
   TouchableOpacity, 
   SafeAreaView,
   Alert,
-  Animated 
+  Animated, 
+  Platform 
 } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '@/contexts/ThemeContext';
-import { PhoneOff, Mic, MicOff, User, Volume2, Phone } from 'lucide-react-native';
+import { PhoneOff, Mic, MicOff, User, Volume2, Phone, ChevronDown } from 'lucide-react-native';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Call states
 const CALL_STATES = {
@@ -26,12 +28,16 @@ const CALL_STATES = {
 export default function CallScreen() {
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const { availableLanguages, currentLanguage } = useLanguage();
+  const insets = useSafeAreaInsets();
   const [callDuration, setCallDuration] = useState(0);
   const [callState, setCallState] = useState(CALL_STATES.IDLE);
   const [isMuted, setIsMuted] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [callStatus, setCallStatus] = useState(t('call.ready') || 'Ready to call');
   const [pulseAnim] = useState(new Animated.Value(1));
+  const [callLanguage, setCallLanguage] = useState<string>(currentLanguage);
+  const [langOpen, setLangOpen] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
 
@@ -46,6 +52,78 @@ export default function CallScreen() {
     callHeader: {
       alignItems: 'center',
       paddingVertical: 60,
+    },
+    headerControls: {
+      position: 'absolute',
+      right: 20,
+      top: 12 + insets.top,
+      alignItems: 'flex-end',
+      zIndex: 1000,
+      elevation: 10,
+    },
+    dropdownTrigger: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    dropdownLabel: {
+      color: colors.text,
+      fontSize: 11,
+      marginRight: 6,
+      maxWidth: 120,
+    },
+    dropdownMenu: {
+      position: 'absolute',
+      right: 0,
+      top: 30,
+      minWidth: 180,
+      marginTop: 6,
+      borderRadius: 10,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+      paddingVertical: 4,
+      zIndex: 1001,
+      elevation: 12,
+    },
+    dropdownItem: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    dropdownItemText: {
+      color: colors.text,
+      fontSize: 12,
+      includeFontPadding: false,
+      maxWidth: 160,
+      flexShrink: 1,
+    },
+    languageRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      maxWidth: 240,
+    },
+    languageFlag: {
+      fontSize: 14,
+    },
+    languageName: {
+      marginLeft: 8,
+      color: colors.text,
+      fontSize: 12,
+      lineHeight: 16,
+      includeFontPadding: false,
+      flexShrink: 1,
     },
     avatar: {
       width: 200,
@@ -466,6 +544,42 @@ export default function CallScreen() {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <View style={styles.callHeader}>
+          <View style={styles.headerControls}>
+            <TouchableOpacity
+              onPress={() => setLangOpen(!langOpen)}
+              style={styles.dropdownTrigger}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.dropdownLabel}>
+                {availableLanguages.find(l => l.code === callLanguage)?.name || callLanguage.toUpperCase()}
+              </Text>
+              <ChevronDown size={14} color={colors.text} />
+            </TouchableOpacity>
+            {langOpen && (
+              <>
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={() => setLangOpen(false)}
+                style={{ position: 'absolute', left: -9999, right: -9999, top: -9999, bottom: -9999 }}
+              />
+              <View style={styles.dropdownMenu}>
+                {availableLanguages.map((lang, idx) => (
+                  <TouchableOpacity
+                    key={lang.code}
+                    onPress={() => { setCallLanguage(lang.code); setLangOpen(false); }}
+                    style={[styles.dropdownItem, idx === availableLanguages.length - 1 && { borderBottomWidth: 0 }]}
+                  >
+                    <View style={styles.languageRow}>
+                      <Text style={styles.languageFlag}>{lang.flag}</Text>
+                      <Text style={styles.languageName} numberOfLines={1}>{lang.name}</Text>
+                    </View>
+                    {callLanguage === lang.code && <Text style={styles.dropdownItemText}>✓</Text>}
+                  </TouchableOpacity>
+                ))}
+              </View>
+              </>
+            )}
+          </View>
           <View style={{ position: 'relative' }}>
             {callState === CALL_STATES.CONNECTED && (
               <Animated.View

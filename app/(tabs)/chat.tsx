@@ -13,9 +13,10 @@ import {
   Keyboard
 } from 'react-native';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Send, Mic, Camera, MicOff } from 'lucide-react-native';
+import { Send, Mic, Camera, MicOff, ChevronDown } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface Message {
   id: string;
@@ -28,6 +29,10 @@ interface Message {
 export default function ChatScreen() {
   const { colors } = useTheme();
   const { t } = useLanguage();
+  const { availableLanguages, currentLanguage } = useLanguage();
+  const insets = useSafeAreaInsets();
+  const [localLangOpen, setLocalLangOpen] = useState(false);
+  const [chatLanguage, setChatLanguage] = useState<string>(currentLanguage);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -87,6 +92,78 @@ export default function ChatScreen() {
       backgroundColor: colors.surface,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    headerControls: {
+      position: 'absolute',
+      right: 15,
+      top: 16 + insets.top,
+      alignItems: 'flex-end',
+      zIndex: 1000,
+      elevation: 10,
+    },
+    dropdownTrigger: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    dropdownLabel: {
+      color: colors.text,
+      fontSize: 11,
+      marginRight: 6,
+      maxWidth: 120,
+    },
+    dropdownMenu: {
+      position: 'absolute',
+      right: 0,
+      top: 34,
+      minWidth: 180,
+      marginTop: 6,
+      borderRadius: 10,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: 'hidden',
+      paddingVertical: 4,
+      zIndex: 1001,
+      elevation: 12,
+    },
+    dropdownItem: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    dropdownItemText: {
+      color: colors.text,
+      fontSize: 12,
+      includeFontPadding: false,
+      maxWidth: 140,
+      flexShrink: 1,
+    },
+    languageRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexShrink: 1,
+      maxWidth: 200,
+    },
+    languageFlag: {
+      fontSize: 14,
+    },
+    languageName: {
+      marginLeft: 8,
+      color: colors.text,
+      fontSize: 12,
+      lineHeight: 16,
+      includeFontPadding: false,
+      flexShrink: 1,
     },
     headerTitle: {
       fontSize: 22,
@@ -284,6 +361,42 @@ export default function ChatScreen() {
         <View style={styles.container}>
           <View style={styles.header}>
           <Text style={styles.headerTitle}>{t('chat.title') || 'Farming Assistant'}</Text>
+            <View style={styles.headerControls}>
+              <TouchableOpacity
+                onPress={() => setLocalLangOpen(!localLangOpen)}
+                style={styles.dropdownTrigger}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.dropdownLabel}>
+                  {availableLanguages.find(l => l.code === chatLanguage)?.name || chatLanguage.toUpperCase()}
+                </Text>
+                <ChevronDown size={14} color={colors.text} />
+              </TouchableOpacity>
+              {localLangOpen && (
+                <>
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => setLocalLangOpen(false)}
+                  style={{ position: 'absolute', left: -9999, right: -9999, top: -9999, bottom: -9999 }}
+                />
+                <View style={styles.dropdownMenu}>
+                  {availableLanguages.map((lang, idx) => (
+                    <TouchableOpacity
+                      key={lang.code}
+                      onPress={() => { setChatLanguage(lang.code); setLocalLangOpen(false); }}
+                      style={[styles.dropdownItem, idx === availableLanguages.length - 1 && { borderBottomWidth: 0 }]}
+                    >
+                      <View style={styles.languageRow}>
+                        <Text style={styles.languageFlag}>{lang.flag}</Text>
+                        <Text style={styles.languageName} numberOfLines={1}>{lang.name}</Text>
+                      </View>
+                      {chatLanguage === lang.code && <Text style={styles.dropdownItemText}>✓</Text>}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                </>
+              )}
+            </View>
           </View>
 
           <ScrollView 
