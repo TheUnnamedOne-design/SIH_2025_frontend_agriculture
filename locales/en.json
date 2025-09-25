@@ -1,0 +1,105 @@
+{
+  "navigation": {
+    "home": "Home",
+    "chat": "Chat", 
+    "call": "Call",
+    "profile": "Profile",
+    "settings": "Settings"
+  },
+  "common": {
+    "login": "Login",
+    "continue": "Continue",
+    "cancel": "Cancel",
+    "close": "Close",
+    "save": "Save",
+    "ok": "OK",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "auth": {
+    "enterPhoneNumber": "Enter your phone number to continue",
+    "phoneNumberLogin": "Phone Number Login",
+    "enterYourPhoneNumber": "Enter your phone number",
+    "invalidPhoneNumber": "Invalid Phone Number",
+    "pleaseEnterValidPhone": "Please enter a valid 10-digit phone number",
+    "loginSuccessful": "Login Successful",
+    "welcomeToFarmerHelpline": "Welcome to Farmer Helpline!"
+  },
+  "landing": {
+    "title": "Farmer Helpline",
+    "subtitle": "Your agricultural assistance platform",
+    "welcome": "Welcome, Farmer!",
+    "description": "Choose from our range of services to get instant help with your farming needs. Our AI-powered assistant is available 24/7 to support you.",
+    "chatWithBot": "Chat with Bot",
+    "textBasedAssistance": "Text-based farming assistance",
+    "voiceCallBot": "Voice Call Bot",
+    "voiceOnlyExperience": "Voice-only helpline experience"
+  },
+  "profile": {
+    "title": "Profile",
+    "subtitle": "Your account and government schemes",
+    "farmerName": "Farmer Name",
+    "farmSize": "Farm Size",
+    "governmentSchemes": "Government Schemes",
+    "eligible": "Eligible",
+    "applied": "Applied", 
+    "approved": "Approved",
+    "eligibility": "Eligibility"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Manage your app preferences",
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "darkMode": "Dark Mode",
+    "lightMode": "Light Mode",
+    "language": "Language",
+    "selectLanguage": "Select Language",
+    "notifications": "Notifications",
+    "pushNotifications": "Push Notifications",
+    "receiveUpdates": "Receive updates and alerts",
+    "account": "Account",
+    "logout": "Logout",
+    "confirmLogout": "Confirm Logout",
+    "logoutMessage": "Are you sure you want to log out?",
+    "loggedOut": "Logged out successfully",
+    "editProfile": "Edit Profile",
+    "updatePersonalInfo": "Update your personal information",
+    "privacy": "Privacy & Security",
+    "manageDataPrivacy": "Manage your data and privacy settings",
+    "about": "About",
+    "appVersion": "App version and information",
+    "signOutAccount": "Sign out of your account"
+  },
+  "chat": {
+    "title": "Farming Assistant",
+    "placeholder": "Type your question...",
+    "welcomeMessage": "Hello! I'm your farming assistant. How can I help you today?",
+    "suggestion4": "Thank you for reaching out! For the best farming advice, I recommend speaking with agricultural specialists who understand your local conditions."
+  },
+  "faq": {
+    "title": "Frequently Asked Questions",
+    "subtitle": "Common farming questions and answers"
+  },
+  "call": {
+    "ready": "Ready to call",
+    "connecting": "Connecting...",
+    "connected": "Connected",
+    "instructionIdle": "Tap the call button to connect with the Farmer Helpline assistant",
+    "instructionConnecting": "Connecting you to the Farmer Helpline assistant...",
+    "instructionConnected": "Connected! You can now speak with the assistant.",
+    "botName": "Farmer Helpline Bot",
+    "listening": "Listening...",
+    "tapToSpeak": "Tap to speak",
+    "micOnTitle": "Microphone On",
+    "micOffTitle": "Microphone Off",
+    "micOnMsg": "You can now speak to the assistant",
+    "micOffMsg": "Your microphone is muted",
+    "speakerTitle": "Speaker",
+    "speakerMsg": "Speaker mode toggled",
+    "voiceRecognizedTitle": "Voice Recognized",
+    "voiceRecognizedMsg": "Thank you for your question. The assistant is processing your request...",
+    "assistantResponseTitle": "Assistant Response",
+    "assistantResponseMsg": "Based on your question about crop diseases, I recommend checking for common symptoms like yellowing leaves or spots. Would you like specific treatment recommendations?"
+  }
+}
