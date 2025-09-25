@@ -38,8 +38,12 @@ export default function CallScreen() {
   const [pulseAnim] = useState(new Animated.Value(1));
   const [callLanguage, setCallLanguage] = useState<string>(currentLanguage);
   const [langOpen, setLangOpen] = useState(false);
+  const [isTalking, setIsTalking] = useState(false);
+  const [talkRecording, setTalkRecording] = useState<Audio.Recording | null>(null);
+  const [talkRecordingUri, setTalkRecordingUri] = useState<string | null>(null);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
+  const [suspendMainRecording, setSuspendMainRecording] = useState(false);
 
   const styles = StyleSheet.create({
     container: {
@@ -239,6 +243,9 @@ export default function CallScreen() {
     speakerButton: {
       backgroundColor: colors.primary,
     },
+    talkButton: {
+      backgroundColor: isTalking ? colors.error : colors.primary,
+    },
     pulseAnimation: {
       position: 'absolute',
       width: 200,
@@ -315,7 +322,7 @@ export default function CallScreen() {
   useEffect(() => {
     const run = async () => {
       try {
-        if (callState === CALL_STATES.CONNECTED && !recording) {
+        if (callState === CALL_STATES.CONNECTED && !recording && !suspendMainRecording) {
           const perm = await Audio.requestPermissionsAsync();
           if (perm.status !== 'granted') {
             Alert.alert('Microphone Permission', 'Permission to access microphone is required to record.');
@@ -337,7 +344,7 @@ export default function CallScreen() {
     };
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callState]);
+  }, [callState, suspendMainRecording]);
 
   const stopRecording = async () => {
     try {
@@ -456,6 +463,9 @@ export default function CallScreen() {
           text: "End Call", 
           style: "destructive",
           onPress: async () => {
+            if (isTalking) {
+              await stopTalkRecording();
+            }
             await stopRecording();
             await exportAndShareRecording();
             resetCall();
@@ -463,6 +473,108 @@ export default function CallScreen() {
         }
       ]
     );
+  };
+
+  const startTalkRecording = async () => {
+    if (callState !== CALL_STATES.CONNECTED) return;
+    try {
+      // Suspend the background/main recording while user actively talks
+      setSuspendMainRecording(true);
+      if (recording) {
+        await stopRecording();
+      }
+      const perm = await Audio.requestPermissionsAsync();
+      if (perm.status !== 'granted') {
+        Alert.alert('Microphone Permission', 'Permission to access microphone is required to record.');
+        setSuspendMainRecording(false);
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording: talkRec } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      setTalkRecording(talkRec);
+      setTalkRecordingUri(null);
+      setIsTalking(true);
+    } catch (e) {
+      console.log('startTalkRecording error', e);
+      setSuspendMainRecording(false);
+    }
+  };
+
+  const stopTalkRecording = async () => {
+    try {
+      if (talkRecording) {
+        await talkRecording.stopAndUnloadAsync();
+        const uri = talkRecording.getURI();
+        setTalkRecording(null);
+        if (uri) {
+          setTalkRecordingUri(uri);
+          await convertTalkToMp3(uri);
+        }
+      }
+    } catch (e) {
+      console.log('stopTalkRecording error', e);
+    } finally {
+      setIsTalking(false);
+      // Resume main/background recording if call still active
+      setSuspendMainRecording(false);
+      if (callState === CALL_STATES.CONNECTED && !recording) {
+        try {
+          await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+          const { recording: rec } = await Audio.Recording.createAsync(
+            Audio.RecordingOptionsPresets.HIGH_QUALITY
+          );
+          setRecording(rec);
+          setRecordingUri(null);
+        } catch (e) {
+          console.log('resume main recording error', e);
+        }
+      }
+    }
+  };
+
+  const convertTalkToMp3 = async (filePath: string) => {
+    try {
+      const backendUrl = 'http://127.0.0.1:8000/convert';
+      const filename = `talk_${Date.now()}.m4a`;
+      const form = new FormData();
+      // @ts-ignore RN FormData type
+      form.append('file', {
+        uri: filePath,
+        name: filename,
+        type: 'audio/mp4',
+      });
+
+      const res = await fetch(backendUrl, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+        },
+        body: form as any,
+      });
+      if (!res.ok) {
+        throw new Error(`Upload failed: ${res.status}`);
+      }
+      const json = await res.json();
+      const mp3B64 = json.base64 as string;
+      const mp3Name = json.filename as string || `talk_${Date.now()}.mp3`;
+      const mp3Path = `${FileSystem.documentDirectory}talk_recordings/${mp3Name}`;
+      await FileSystem.writeAsStringAsync(mp3Path, mp3B64, { encoding: FileSystem.EncodingType.Base64 });
+      Alert.alert('MP3 Saved', `Talk recording saved as MP3 at: ${mp3Path}`);
+    } catch (e) {
+      console.log('convertTalkToMp3 error', e);
+      Alert.alert('Conversion Failed', 'Could not convert to MP3. Please ensure the backend is running.');
+    }
+  };
+
+  const toggleTalk = async () => {
+    if (callState !== CALL_STATES.CONNECTED) return;
+    if (isTalking) {
+      await stopTalkRecording();
+    } else {
+      await startTalkRecording();
+    }
   };
 
   const exportAndShareRecording = async () => {
@@ -647,6 +759,24 @@ export default function CallScreen() {
           )}
           
           {renderMainButton()}
+
+          {isCallActive && (
+            <TouchableOpacity
+              style={[
+                styles.controlButton, 
+                styles.talkButton,
+                callState !== CALL_STATES.CONNECTED && styles.disabledButton
+              ]}
+              onPress={toggleTalk}
+              disabled={callState !== CALL_STATES.CONNECTED}
+            >
+              {isTalking ? (
+                <MicOff size={24} color="#FFFFFF" />
+              ) : (
+                <Mic size={24} color="#FFFFFF" />
+              )}
+            </TouchableOpacity>
+          )}
 
           {isCallActive && (
             <TouchableOpacity
