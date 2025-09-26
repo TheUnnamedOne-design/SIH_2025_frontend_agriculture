@@ -1,4 +1,5 @@
 // services/apiService.ts
+
 interface ApiConfig {
     baseURL: string;
     timeout: number;
@@ -19,12 +20,35 @@ interface ApiConfig {
     };
     metadata: {
       userId?: string;
-      callId?: string;
+      callId?: string | null;    // ✅ Fixed: Allow null values
       duration: number;
       language: string;
       timestamp: number;
       deviceInfo?: any;
+      segmentIndex?: number;     // ✅ Added: For recording segments
+      isSegment?: boolean;       // ✅ Added: Flag for segments
+      [key: string]: any;        // ✅ Added: Allow additional properties
     };
+  }
+  
+  // Interface for call end data (removed duplicate)
+  interface CallEndData {
+    callId: string;
+    userId: string;
+    duration: number;
+    startTime: string;
+    endTime: string;
+    language: string;
+    recordingPath?: string | null;  // ✅ Fixed: Allow null values
+    deviceInfo: {
+      platform: string;
+      version: string | number;
+    };
+    metadata?: {
+      wasRecorded: boolean;
+      endedBy: string;
+      [key: string]: any;
+    } | null;  // ✅ Fixed: Allow null metadata
   }
   
   interface ApiResponse<T = any> {
@@ -89,6 +113,40 @@ interface ApiConfig {
       }
     }
   
+    // Send call end event
+    async sendCallEndEvent(callData: CallEndData): Promise<ApiResponse> {
+      try {
+        const response = await this.fetchWithTimeout(
+          `${this.config.baseURL}/api/calls/end`,
+          {
+            method: 'POST',
+            headers: this.config.headers,
+            body: JSON.stringify(callData),
+          },
+          10000 // 10 second timeout for call end events
+        );
+  
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.message || `Call end event failed with status: ${response.status}`);
+        }
+  
+        return {
+          success: true,
+          data: result,
+          message: 'Call end event sent successfully'
+        };
+  
+      } catch (error: any) {
+        return {
+          success: false,
+          error: error.message || 'Failed to send call end event',
+          message: 'Call end event failed'
+        };
+      }
+    }
+  
     // Upload call recording
     async uploadRecording(
       uploadData: CallRecordingUpload,
@@ -104,8 +162,12 @@ interface ApiConfig {
           type: uploadData.file.type,
         } as any);
   
-        // Add metadata
-        formData.append('metadata', JSON.stringify(uploadData.metadata));
+        // Add metadata (convert null values to undefined for JSON)
+        const cleanMetadata = {
+          ...uploadData.metadata,
+          callId: uploadData.metadata.callId || undefined, // ✅ Convert null to undefined
+        };
+        formData.append('metadata', JSON.stringify(cleanMetadata));
   
         const response = await this.fetchWithTimeout(
           `${this.config.baseURL}/api/recordings/upload`,
@@ -139,13 +201,34 @@ interface ApiConfig {
         };
       }
     }
-  
+    
     // Get user's recordings
     async getRecordings(userId?: string): Promise<ApiResponse> {
       try {
         const url = userId 
           ? `${this.config.baseURL}/api/recordings/user/${userId}`
           : `${this.config.baseURL}/api/recordings`;
+  
+        const response = await this.fetchWithTimeout(url, {
+          method: 'GET',
+          headers: this.config.headers,
+        });
+  
+        const result = await response.json();
+        return response.ok ? { success: true, data: result } : { success: false, error: result.message };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    }
+  
+    // Get call history
+    async getCallHistory(userId?: string, limit?: number): Promise<ApiResponse> {
+      try {
+        const params = new URLSearchParams();
+        if (userId) params.append('userId', userId);
+        if (limit) params.append('limit', limit.toString());
+  
+        const url = `${this.config.baseURL}/api/calls/history${params.toString() ? '?' + params.toString() : ''}`;
   
         const response = await this.fetchWithTimeout(url, {
           method: 'GET',
