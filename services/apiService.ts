@@ -20,18 +20,17 @@ interface ApiConfig {
     };
     metadata: {
       userId?: string;
-      callId?: string | null;    // ✅ Fixed: Allow null values
+      callId?: string | null;
       duration: number;
       language: string;
       timestamp: number;
       deviceInfo?: any;
-      segmentIndex?: number;     // ✅ Added: For recording segments
-      isSegment?: boolean;       // ✅ Added: Flag for segments
-      [key: string]: any;        // ✅ Added: Allow additional properties
+      segmentIndex?: number;
+      isSegment?: boolean;
+      [key: string]: any;
     };
   }
   
-  // Interface for call end data (removed duplicate)
   interface CallEndData {
     callId: string;
     userId: string;
@@ -39,7 +38,7 @@ interface ApiConfig {
     startTime: string;
     endTime: string;
     language: string;
-    recordingPath?: string | null;  // ✅ Fixed: Allow null values
+    recordingPath?: string | null;
     deviceInfo: {
       platform: string;
       version: string | number;
@@ -48,7 +47,21 @@ interface ApiConfig {
       wasRecorded: boolean;
       endedBy: string;
       [key: string]: any;
-    } | null;  // ✅ Fixed: Allow null metadata
+    } | null;
+  }
+  
+  // NEW: Voice query interface
+  interface VoiceQueryData {
+    audioFile: {
+      uri: string;
+      name: string;
+      type: string;
+    };
+    district: string;
+    state: string;
+    choice: number;
+    currentCrop?: string;
+    preferredLanguage: string;
   }
   
   interface ApiResponse<T = any> {
@@ -63,7 +76,7 @@ interface ApiConfig {
   
     constructor(baseURL: string) {
       this.config = {
-        baseURL: baseURL.replace(/\/$/, ''), // Remove trailing slash
+        baseURL: baseURL.replace(/\/$/, ''),
         timeout: 30000,
         headers: {
           'Content-Type': 'application/json',
@@ -104,7 +117,7 @@ interface ApiConfig {
         const response = await this.fetchWithTimeout(
           `${this.config.baseURL}/health`, 
           { method: 'GET' },
-          5000 // 5 second timeout for health check
+          5000
         );
         return response.ok;
       } catch (error) {
@@ -123,7 +136,7 @@ interface ApiConfig {
             headers: this.config.headers,
             body: JSON.stringify(callData),
           },
-          10000 // 10 second timeout for call end events
+          10000
         );
   
         const result = await response.json();
@@ -147,6 +160,60 @@ interface ApiConfig {
       }
     }
   
+    // NEW: Send voice query to speech API
+    async sendVoiceQuery(voiceData: VoiceQueryData): Promise<ApiResponse> {
+      try {
+        console.log('🎤 Sending voice query to backend...');
+        
+        const formData = new FormData();
+        
+        // Add the audio file
+        formData.append('audio', {
+          uri: voiceData.audioFile.uri,
+          name: voiceData.audioFile.name,
+          type: voiceData.audioFile.type,
+        } as any);
+  
+        // Add form data
+        formData.append('district', voiceData.district);
+        formData.append('state', voiceData.state);
+        formData.append('choice', voiceData.choice.toString());
+        formData.append('current_crop', voiceData.currentCrop || 'rice');
+        formData.append('preferred_language', voiceData.preferredLanguage);
+  
+        const response = await this.fetchWithTimeout(
+          `${this.config.baseURL}/speech/voice-query-json`,
+          {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Content-Type': 'multipart/form-data',
+            },
+          },
+          30000 // 30 second timeout for voice processing
+        );
+  
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.error || `Voice query failed with status: ${response.status}`);
+        }
+  
+        return {
+          success: true,
+          data: result,
+          message: 'Voice query processed successfully'
+        };
+  
+      } catch (error: any) {
+        return {
+          success: false,
+          error: error.message || 'Voice query failed',
+          message: 'Voice query processing failed'
+        };
+      }
+    }
+  
     // Upload call recording
     async uploadRecording(
       uploadData: CallRecordingUpload,
@@ -155,17 +222,15 @@ interface ApiConfig {
       try {
         const formData = new FormData();
         
-        // Add the audio file
         formData.append('recording', {
           uri: uploadData.file.uri,
           name: uploadData.file.name,
           type: uploadData.file.type,
         } as any);
   
-        // Add metadata (convert null values to undefined for JSON)
         const cleanMetadata = {
           ...uploadData.metadata,
-          callId: uploadData.metadata.callId || undefined, // ✅ Convert null to undefined
+          callId: uploadData.metadata.callId || undefined,
         };
         formData.append('metadata', JSON.stringify(cleanMetadata));
   
@@ -178,7 +243,7 @@ interface ApiConfig {
               'Content-Type': 'multipart/form-data',
             },
           },
-          60000 // 60 second timeout for uploads
+          60000
         );
   
         const result = await response.json();
@@ -242,44 +307,6 @@ interface ApiConfig {
       }
     }
   
-    // Delete recording
-    async deleteRecording(recordingId: string): Promise<ApiResponse> {
-      try {
-        const response = await this.fetchWithTimeout(
-          `${this.config.baseURL}/api/recordings/${recordingId}`,
-          {
-            method: 'DELETE',
-            headers: this.config.headers,
-          }
-        );
-  
-        const result = await response.json();
-        return response.ok ? { success: true, data: result } : { success: false, error: result.message };
-      } catch (error: any) {
-        return { success: false, error: error.message };
-      }
-    }
-  
-    // Convert audio format
-    async convertAudio(recordingId: string, targetFormat: 'mp3' | 'wav'): Promise<ApiResponse> {
-      try {
-        const response = await this.fetchWithTimeout(
-          `${this.config.baseURL}/api/recordings/${recordingId}/convert`,
-          {
-            method: 'POST',
-            headers: this.config.headers,
-            body: JSON.stringify({ format: targetFormat }),
-          },
-          60000 // Longer timeout for conversion
-        );
-  
-        const result = await response.json();
-        return response.ok ? { success: true, data: result } : { success: false, error: result.message };
-      } catch (error: any) {
-        return { success: false, error: error.message };
-      }
-    }
-  
     // Get recording analytics
     async getAnalytics(userId?: string): Promise<ApiResponse> {
       try {
@@ -299,11 +326,6 @@ interface ApiConfig {
       }
     }
   
-    // Update config
-    updateConfig(newConfig: Partial<ApiConfig>): void {
-      this.config = { ...this.config, ...newConfig };
-    }
-  
     // Get backend status
     async getServerStatus(): Promise<ApiResponse> {
       try {
@@ -320,23 +342,9 @@ interface ApiConfig {
       }
     }
   
-    // Sync pending recordings
-    async syncPendingRecordings(recordings: CallRecordingUpload[]): Promise<ApiResponse[]> {
-      const results = [];
-      
-      for (const recording of recordings) {
-        try {
-          const result = await this.uploadRecording(recording);
-          results.push(result);
-        } catch (error) {
-          results.push({
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          });
-        }
-      }
-      
-      return results;
+    // Update config
+    updateConfig(newConfig: Partial<ApiConfig>): void {
+      this.config = { ...this.config, ...newConfig };
     }
   }
   

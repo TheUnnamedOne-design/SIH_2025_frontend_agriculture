@@ -10,6 +10,7 @@ import {
   Platform 
 } from 'react-native';
 import { useTheme } from '@/contexts/ThemeContext';
+// import { useUser } from '@/contexts/userContext'; // Commented out
 import { 
   PhoneOff, 
   Mic, 
@@ -21,7 +22,8 @@ import {
   Settings, 
   FileAudio,
   Cloud,
-  CloudOff
+  CloudOff,
+  MessageSquare
 } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
 import { Audio } from 'expo-av';
@@ -62,6 +64,18 @@ export default function CallScreen() {
   const { colors } = useTheme();
   const { t, i18n } = useTranslation();
   const insets = useSafeAreaInsets();
+
+  // Dummy user profile - always logged in
+  const userProfile = {
+    name: 'Ravi Kumar',
+    phone: '+91 98765 43210',
+    location: 'Guntur, Andhra Pradesh, India',
+    farmSize: '5 acres',
+    district: 'Guntur',
+    state: 'Andhra Pradesh',
+    currentCrop: 'rice',
+    isLoggedIn: true,
+  };
   
   // Call state
   const [callDuration, setCallDuration] = useState(0);
@@ -92,6 +106,10 @@ export default function CallScreen() {
   const [callId, setCallId] = useState<string | null>(null);
   const [callStartTime, setCallStartTime] = useState<number | null>(null);
 
+  // Voice query state
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [lastAIResponse, setLastAIResponse] = useState<string | null>(null);
+
   // Available languages
   const availableLanguages = [
     { code: 'en', name: 'English', flag: '🇺🇸' },
@@ -104,23 +122,166 @@ export default function CallScreen() {
     { code: 'pa', name: 'ਪੰਜਾਬੀ', flag: '🇮🇳' },
   ];
 
+  // Helper function to map short language codes to full names
+  const mapLanguageToFull = (langCode: string): string => {
+    const languageMap: { [key: string]: string } = {
+      'en': 'English',
+      'hi': 'Hindi', 
+      'te': 'Telugu',
+      'ta': 'Tamil',
+      'ml': 'Malayalam',
+      'kn': 'Kannada',
+      'bn': 'Bengali',
+      'pa': 'Punjabi',
+    };
+    return languageMap[langCode] || 'English';
+  };
+
   // Health check function
   const checkBackendConnection = async () => {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-      const response = await fetch(`${BACKEND_CONFIG.CURRENT_URL}/health`, {
-        method: 'GET',
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-      setBackendConnected(response.ok);
-      console.log('Backend connection:', response.ok ? 'Online' : 'Offline');
+      const apiService = new ApiService(BACKEND_CONFIG.CURRENT_URL);
+      const connected = await apiService.checkConnection();
+      setBackendConnected(connected);
+      console.log('🌐 Backend connection:', connected ? 'Online' : 'Offline');
     } catch (error) {
       setBackendConnected(false);
-      console.log('Backend connection failed:', error instanceof Error ? error.message : 'Unknown error');
+      console.log('❌ Backend connection failed:', error instanceof Error ? error.message : 'Unknown error');
+    }
+  };
+
+  // Send voice query to backend
+  const sendVoiceQuery = async (audioFilePath: string) => {
+    if (!backendConnected) {
+      Alert.alert('No Connection', 'Backend server is offline. Please try again later.');
+      return;
+    }
+
+    try {
+      console.log('🎤 Sending voice query with user data...');
+      setIsProcessingVoice(true);
+
+      const apiService = new ApiService(BACKEND_CONFIG.CURRENT_URL);
+      
+      const voiceQueryData = {
+        audioFile: {
+          uri: audioFilePath,
+          name: `voice_query_${Date.now()}.m4a`,
+          type: 'audio/mp4',
+        },
+        district: userProfile.district || 'Guntur',
+        state: userProfile.state || 'Andhra Pradesh',
+        choice: 1, // 1 for farming advice, 2 for pesticide
+        currentCrop: userProfile.currentCrop || 'rice',
+        preferredLanguage: mapLanguageToFull(callLanguage),
+      };
+
+      console.log('📋 Voice query data:', {
+        district: voiceQueryData.district,
+        state: voiceQueryData.state,
+        currentCrop: voiceQueryData.currentCrop,
+        language: voiceQueryData.preferredLanguage
+      });
+
+      const result = await apiService.sendVoiceQuery(voiceQueryData);
+      
+      if (result.success && result.data) {
+        console.log('✅ Voice query successful:', result.data);
+        
+        const response = result.data;
+        setLastAIResponse(response.native_answer);
+        
+        // Show the response to user
+        Alert.alert(
+          '🤖 AI Assistant Response',
+          `Question: ${response.transcribed_text}\n\n${response.native_answer.substring(0, 200)}${response.native_answer.length > 200 ? '...' : ''}`,
+          [
+            { text: 'OK' },
+            { 
+              text: 'View Full Response', 
+              onPress: () => showFullResponse(response) 
+            }
+          ]
+        );
+        
+      } else {
+        console.log('❌ Voice query failed:', result.error);
+        Alert.alert('Voice Query Failed', result.error || 'Unknown error occurred');
+      }
+    } catch (error) {
+      console.log('❌ Error sending voice query:', error);
+      Alert.alert('Error', 'Failed to send voice query. Please try again.');
+    } finally {
+      setIsProcessingVoice(false);
+    }
+  };
+
+  // Show full AI response
+  const showFullResponse = (response: any) => {
+    Alert.alert(
+      '🌾 Complete AI Response',
+      `❓ Question: ${response.transcribed_text}\n\n💡 Answer: ${response.native_answer}\n\n🔊 Language: ${response.detected_language}`,
+      [{ text: 'Close' }]
+    );
+  };
+
+  // Voice query recording
+  const startVoiceQuery = async () => {
+    if (callState !== CALL_STATES.CONNECTED) {
+      Alert.alert('Not Connected', 'Please connect to a call first to use voice queries.');
+      return;
+    }
+
+    try {
+      console.log('🎤 Starting voice query recording...');
+      setIsListening(true);
+      
+      const hasPermissions = await requestPermissions();
+      if (!hasPermissions) {
+        setIsListening(false);
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+
+      const { recording: voiceRecording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      
+      // Record for 8 seconds
+      setTimeout(async () => {
+        try {
+          await voiceRecording.stopAndUnloadAsync();
+          const uri = voiceRecording.getURI();
+          setIsListening(false);
+          
+          if (uri) {
+            console.log('🎤 Voice query recorded, processing...');
+            Alert.alert(
+              'Processing Voice Query',
+              '🤖 Please wait while AI processes your question...',
+              [{ text: 'OK' }]
+            );
+            
+            // Send to voice query API
+            await sendVoiceQuery(uri);
+          }
+        } catch (error) {
+          console.log('❌ Error stopping voice recording:', error);
+          setIsListening(false);
+          Alert.alert('Recording Error', 'Failed to process voice recording.');
+        }
+      }, 8000); // 8 second recording
+      
+    } catch (error) {
+      console.log('❌ Failed to start voice query:', error);
+      setIsListening(false);
+      Alert.alert('Voice Query Error', 'Failed to start voice recording.');
     }
   };
 
@@ -134,9 +295,11 @@ export default function CallScreen() {
     recordingPath?: string | null;
   }) => {
     try {
+      console.log('📞 Sending call end event...');
+      
       const callEndData = {
         callId: callData.callId,
-        userId: 'user_123', // Replace with actual user ID
+        userId: userProfile.phone, // Use phone as user ID
         duration: callData.duration,
         startTime: new Date(callData.startTime).toISOString(),
         endTime: new Date(callData.endTime).toISOString(),
@@ -149,7 +312,12 @@ export default function CallScreen() {
         metadata: {
           wasRecorded: !!callData.recordingPath,
           endedBy: 'user',
-          totalSegments: recordingSegments.length, // Added segment count
+          totalSegments: recordingSegments.length,
+          userName: userProfile.name,
+          userLocation: userProfile.location,
+          farmSize: userProfile.farmSize,
+          currentCrop: userProfile.currentCrop,
+          hadVoiceQueries: !!lastAIResponse,
         }
       };
       
@@ -185,12 +353,14 @@ export default function CallScreen() {
           type: 'audio/mp4',
         },
         metadata: {
-          userId: 'user_123',
+          userId: userProfile.phone,
           callId: callId,
           duration: callDuration,
           language: callLanguage,
           timestamp: Date.now(),
           isSegment: false,
+          userName: userProfile.name,
+          userLocation: userProfile.location,
           deviceInfo: {
             platform: Platform.OS,
             version: Platform.Version,
@@ -207,155 +377,6 @@ export default function CallScreen() {
       }
     } catch (error) {
       console.log('❌ Error uploading audio file:', error);
-    }
-  };
-
-  // Send recording segment and start new one
-  const sendRecordingSegment = async () => {
-    if (!isRecording || !recording) {
-      Alert.alert('No Recording', 'No active recording to send.');
-      return;
-    }
-
-    try {
-      setIsSendingSegment(true);
-      console.log('📤 Sending recording segment...');
-
-      // Stop current recording
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      setRecording(null);
-      setIsRecording(false);
-
-      if (uri) {
-        // Save the segment with segment number
-        const segmentPath = await saveRecordingSegment(uri, currentSegmentIndex);
-        
-        if (segmentPath && backendConnected) {
-          // Upload the segment immediately
-          await uploadRecordingSegment(segmentPath, currentSegmentIndex);
-        }
-
-        // Increment segment index
-        setCurrentSegmentIndex(prev => prev + 1);
-      }
-
-      // Immediately start recording the next segment
-      setTimeout(async () => {
-        await startRecording();
-        setIsSendingSegment(false);
-      }, 500);
-
-    } catch (error) {
-      console.log('❌ Error sending recording segment:', error);
-      Alert.alert('Error', 'Failed to send recording segment.');
-      setIsSendingSegment(false);
-    }
-  };
-
-  // Save recording segment with segment number
-  const saveRecordingSegment = async (uri: string, segmentIndex: number): Promise<string | null> => {
-    try {
-      const fileInfo = await FileSystem.getInfoAsync(uri);
-      if (!fileInfo.exists) {
-        throw new Error('Recording segment does not exist');
-      }
-
-      const timestamp = Date.now();
-      const date = new Date(timestamp);
-      const dateStr = date.toISOString().split('T')[0];
-      const timeStr = date.toTimeString().split(' ')[0].replace(/:/g, '-');
-      const filename = `call_${dateStr}_${timeStr}_seg${segmentIndex}_${callLanguage}.m4a`;
-
-      const recordingsDir = `${FileSystem.documentDirectory}call_recordings/`;
-      const dirInfo = await FileSystem.getInfoAsync(recordingsDir);
-      if (!dirInfo.exists) {
-        await FileSystem.makeDirectoryAsync(recordingsDir, { intermediates: true });
-      }
-
-      const localUri = `${recordingsDir}${filename}`;
-      await FileSystem.copyAsync({
-        from: uri,
-        to: localUri,
-      });
-
-      const recordingData: CallRecording = {
-        id: `${timestamp}_seg${segmentIndex}`,
-        filename,
-        uri: localUri,
-        duration: callDuration,
-        timestamp,
-        size: fileInfo.size || 0,
-        language: callLanguage,
-        format: 'm4a',
-        uploadStatus: 'pending',
-      };
-
-      // Add to segments list
-      const updatedSegments = [...recordingSegments, recordingData];
-      setRecordingSegments(updatedSegments);
-
-      // Also add to main recordings list
-      const updatedRecordings = [...savedRecordings, recordingData];
-      setSavedRecordings(updatedRecordings);
-      await AsyncStorage.setItem('savedRecordings', JSON.stringify(updatedRecordings));
-
-      console.log('Recording segment saved:', filename);
-      return localUri;
-
-    } catch (error) {
-      console.log('Failed to save recording segment:', error);
-      return null;
-    }
-  };
-
-  // Upload recording segment
-  const uploadRecordingSegment = async (filePath: string, segmentIndex: number) => {
-    try {
-      if (!callId) {
-        console.log('❌ No callId available, skipping segment upload');
-        return;
-      }
-      
-      const apiService = new ApiService(BACKEND_CONFIG.CURRENT_URL);
-      
-      const uploadData = {
-        file: {
-          uri: filePath,
-          name: `call_${callId}_seg${segmentIndex}_${Date.now()}.m4a`,
-          type: 'audio/mp4',
-        },
-        metadata: {
-          userId: 'user_123',
-          callId: callId,
-          segmentIndex: segmentIndex,
-          duration: callDuration,
-          language: callLanguage,
-          timestamp: Date.now(),
-          isSegment: true,
-          deviceInfo: {
-            platform: Platform.OS,
-            version: Platform.Version,
-          }
-        }
-      };
-
-      const result = await apiService.uploadRecording(uploadData);
-      
-      if (result.success) {
-        console.log(`✅ Recording segment ${segmentIndex} uploaded successfully:`, result.data);
-        Alert.alert(
-          'Segment Sent',
-          `Recording segment ${segmentIndex + 1} uploaded successfully!\nContinuing recording...`,
-          [{ text: 'OK' }]
-        );
-      } else {
-        console.log(`❌ Recording segment ${segmentIndex} upload failed:`, result.error);
-        Alert.alert('Upload Failed', 'Failed to upload recording segment.');
-      }
-    } catch (error) {
-      console.log(`❌ Error uploading recording segment ${segmentIndex}:`, error);
-      Alert.alert('Upload Error', 'Error uploading recording segment.');
     }
   };
 
@@ -379,7 +400,7 @@ export default function CallScreen() {
         setCallStatus(t('call.connecting') || 'Connecting...');
         break;
       case CALL_STATES.CONNECTED:
-        setCallStatus(t('call.connected') || 'Connected');
+        setCallStatus(t('call.connected') || 'Connected - Ask me anything!');
         break;
     }
   }, [callState, t]);
@@ -392,7 +413,7 @@ export default function CallScreen() {
         const newCallId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         setCallId(newCallId);
         setCallStartTime(Date.now());
-        console.log('Call connected with ID:', newCallId);
+        console.log('📞 Call connected with ID:', newCallId);
       }, 2000);
     }
     return () => clearTimeout(timer);
@@ -493,7 +514,7 @@ export default function CallScreen() {
       
       setRecording(newRecording);
       setIsRecording(true);
-      console.log('Recording started');
+      console.log('🎙️ Recording started');
     } catch (error) {
       console.log('Failed to start recording:', error);
       Alert.alert('Recording Error', 'Failed to start recording. Please try again.');
@@ -511,11 +532,11 @@ export default function CallScreen() {
 
       if (uri) {
         const savedPath = await saveRecording(uri);
-        console.log('Recording stopped and saved');
+        console.log('🎙️ Recording stopped and saved');
         return savedPath;
       }
       
-      console.log('Recording stopped');
+      console.log('🎙️ Recording stopped');
       return null;
     } catch (error) {
       console.log('Failed to stop recording:', error);
@@ -565,7 +586,7 @@ export default function CallScreen() {
       setSavedRecordings(updatedRecordings);
       await AsyncStorage.setItem('savedRecordings', JSON.stringify(updatedRecordings));
 
-      console.log('Recording saved:', filename);
+      console.log('💾 Recording saved:', filename);
       return localUri;
 
     } catch (error) {
@@ -580,19 +601,20 @@ export default function CallScreen() {
     setCallState(CALL_STATES.CONNECTING);
     setIsMuted(false);
     setCallDuration(0);
+    setLastAIResponse(null);
   };
 
   const resetCall = async () => {
     let recordingPath: string | null = null;
     
-    // Stop recording if active and get the path
     if (isRecording) {
       recordingPath = await stopRecording();
     }
 
-    // Send call end event to backend if we have call session data
     if (callId && callStartTime) {
       const endTime = Date.now();
+      
+      // Send call end event to backend
       await sendCallEndEvent({
         callId,
         duration: callDuration,
@@ -602,13 +624,13 @@ export default function CallScreen() {
         recordingPath: recordingPath,
       });
 
-      // Upload the final recording if it exists
+      // Upload recording if exists
       if (recordingPath && backendConnected) {
         await uploadRecordingToBackend(recordingPath);
       }
     }
 
-    // Reset all call state including segments
+    // Reset all state
     setCallState(CALL_STATES.IDLE);
     setCallDuration(0);
     setIsMuted(false);
@@ -618,8 +640,10 @@ export default function CallScreen() {
     setRecordingSegments([]);
     setCurrentSegmentIndex(0);
     setIsSendingSegment(false);
+    setLastAIResponse(null);
+    setIsProcessingVoice(false);
     
-    console.log('Call ended and reset');
+    console.log('📞 Call ended and reset');
   };
 
   const endCall = () => {
@@ -640,19 +664,6 @@ export default function CallScreen() {
   const handleSpeaker = () => {
     if (callState !== CALL_STATES.CONNECTED) return;
     Alert.alert('Speaker', 'Speaker mode toggled');
-  };
-
-  const startListening = () => {
-    if (callState !== CALL_STATES.CONNECTED) return;
-    
-    setIsListening(true);
-    setTimeout(() => {
-      setIsListening(false);
-      Alert.alert(
-        'Voice Recognized',
-        'Thank you for your question. The assistant is processing your request...'
-      );
-    }, 3000);
   };
 
   const showRecordingsList = () => {
@@ -676,7 +687,7 @@ export default function CallScreen() {
         style={[
           styles.waveBar,
           {
-            height: isListening ? Math.random() * 30 + 10 : 5,
+            height: (isListening || isProcessingVoice) ? Math.random() * 30 + 10 : 5,
           }
         ]}
       />
@@ -721,11 +732,13 @@ export default function CallScreen() {
   const getInstructionText = () => {
     switch (callState) {
       case CALL_STATES.IDLE:
-        return 'Tap the call button to connect with the Farmer Helpline assistant';
+        return 'Tap the call button to connect with the AI Farming Assistant';
       case CALL_STATES.CONNECTING:
-        return 'Connecting you to the Farmer Helpline assistant...';
+        return 'Connecting you to the AI Farming Assistant...';
       case CALL_STATES.CONNECTED:
-        return 'Connected! You can now speak with the assistant.';
+        return isProcessingVoice 
+          ? '🤖 AI is processing your question...' 
+          : 'Connected! Tap the center area or voice button to ask farming questions.';
       default:
         return "";
     }
@@ -798,22 +811,6 @@ export default function CallScreen() {
       height: 8,
       borderRadius: 4,
       backgroundColor: colors.error,
-    },
-    sendButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.primary + '20',
-      marginBottom: 6,
-    },
-    sendButtonText: {
-      color: colors.primary,
-      fontSize: 11,
-      fontWeight: '600',
     },
     settingsButton: {
       padding: 6,
@@ -998,6 +995,10 @@ export default function CallScreen() {
     recordButton: {
       backgroundColor: isRecording ? colors.error : '#FF9800',
     },
+    voiceQueryButton: {
+      backgroundColor: '#9C27B0',
+      position: 'relative',
+    },
     userInfoContainer: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1038,7 +1039,7 @@ export default function CallScreen() {
             <CloudOff size={16} color="#FF4444" />
           )}
           <Text style={[styles.statusText, { color: backendConnected ? '#4CAF50' : '#FF4444' }]}>
-            {backendConnected ? 'Server Online' : 'Server Offline'}
+            {backendConnected ? 'AI Online' : 'AI Offline'}
           </Text>
         </View>
 
@@ -1046,38 +1047,23 @@ export default function CallScreen() {
           {/* Recording Controls */}
           <View style={styles.recordingControls}>
             {isCallActive && (
-              <>
-                <TouchableOpacity
-                  style={styles.recordingButton}
-                  onPress={isRecording ? stopRecording : startRecording}
-                >
-                  {isRecording && <View style={styles.recordingDot} />}
-                  <Text style={styles.recordingText}>
-                    {isRecording ? 'Recording...' : 'Record'}
-                  </Text>
-                </TouchableOpacity>
-
-                {/* Send Segment Button */}
-                {isRecording && (
-                  <TouchableOpacity
-                    style={[styles.sendButton, isSendingSegment && styles.disabledButton]}
-                    onPress={sendRecordingSegment}
-                    disabled={isSendingSegment}
-                  >
-                    <Text style={styles.sendButtonText}>
-                      {isSendingSegment ? 'Sending...' : `Send Seg ${currentSegmentIndex + 1}`}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </>
+              <TouchableOpacity
+                style={styles.recordingButton}
+                onPress={isRecording ? stopRecording : startRecording}
+              >
+                {isRecording && <View style={styles.recordingDot} />}
+                <Text style={styles.recordingText}>
+                  {isRecording ? 'Recording...' : 'Record'}
+                </Text>
+              </TouchableOpacity>
             )}
             
             <TouchableOpacity
               style={styles.settingsButton}
               onPress={() => {
                 Alert.alert(
-                  'Recording Settings',
-                  `Server: ${backendConnected ? 'Online' : 'Offline'}\nAuto-record: ${autoRecord ? 'Enabled' : 'Disabled'}\nSaved recordings: ${savedRecordings.length}\nRecording segments: ${recordingSegments.length}${callId ? `\nCurrent Call ID: ${callId}` : ''}`,
+                  '🤖 AI Assistant Info',
+                  `🌐 Server: ${backendConnected ? 'Online' : 'Offline'}\n👤 User: ${userProfile.name}\n📍 Location: ${userProfile.location}\n🌾 Crop: ${userProfile.currentCrop || 'rice'}${callId ? `\n📞 Call ID: ${callId}` : ''}\n🎙️ Recordings: ${savedRecordings.length}${lastAIResponse ? '\n💬 Had AI conversation' : ''}`,
                   [
                     { text: 'Cancel' },
                     { text: 'View Recordings', onPress: showRecordingsList },
@@ -1129,7 +1115,7 @@ export default function CallScreen() {
 
           {/* Avatar with Pulse Animation */}
           <View style={{ position: 'relative' }}>
-            {callState === CALL_STATES.CONNECTED && (
+            {(callState === CALL_STATES.CONNECTED || isProcessingVoice) && (
               <Animated.View
                 style={[
                   styles.pulseAnimation,
@@ -1144,7 +1130,7 @@ export default function CallScreen() {
             </View>
           </View>
 
-          <Text style={styles.callerName}>Farmer Helpline Bot</Text>
+          <Text style={styles.callerName}>🌾 AI Farming Assistant</Text>
           <Text style={styles.callStatus}>{callStatus}</Text>
           {callState === CALL_STATES.CONNECTED && (
             <Text style={styles.callTimer}>{formatTime(callDuration)}</Text>
@@ -1153,9 +1139,17 @@ export default function CallScreen() {
 
         <View style={styles.callContent}>
           {callState === CALL_STATES.CONNECTED ? (
-            <TouchableOpacity onPress={startListening} style={styles.listeningIndicator}>
+            <TouchableOpacity 
+              onPress={startVoiceQuery} 
+              style={styles.listeningIndicator}
+              disabled={isProcessingVoice}
+            >
               <Text style={styles.listeningText}>
-                {isListening ? 'Listening...' : 'Tap to speak'}
+                {isProcessingVoice 
+                  ? '🤖 AI is thinking...' 
+                  : isListening 
+                    ? '👂 Listening to your question...' 
+                    : '🎤 Tap to ask farming questions'}
               </Text>
               {renderWaveform()}
             </TouchableOpacity>
@@ -1171,8 +1165,8 @@ export default function CallScreen() {
             <User size={40} color={colors.primary} />
           </View>
           <View>
-            <Text style={styles.userName}>Ravi Kumar</Text>
-            <Text style={styles.userLocation}>Andhra Pradesh, India</Text>
+            <Text style={styles.userName}>{userProfile.name}</Text>
+            <Text style={styles.userLocation}>{userProfile.location}</Text>
           </View>
         </View>
 
@@ -1201,13 +1195,13 @@ export default function CallScreen() {
             <TouchableOpacity
               style={[
                 styles.controlButton, 
-                styles.speakerButton,
-                callState !== CALL_STATES.CONNECTED && styles.disabledButton
+                styles.voiceQueryButton,
+                (callState !== CALL_STATES.CONNECTED || isProcessingVoice) && styles.disabledButton
               ]}
-              onPress={handleSpeaker}
-              disabled={callState !== CALL_STATES.CONNECTED}
+              onPress={startVoiceQuery}
+              disabled={callState !== CALL_STATES.CONNECTED || isProcessingVoice}
             >
-              <Volume2 size={24} color="#FFFFFF" />
+              <MessageSquare size={24} color="#FFFFFF" />
             </TouchableOpacity>
           )}
 
