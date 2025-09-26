@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { MessageCircle } from 'lucide-react-native';
 import { 
   View, 
   Text, 
@@ -12,11 +11,29 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useTheme } from '@/contexts/ThemeContext';
-import { PhoneOff, Mic, MicOff, User, Volume2, Phone, ChevronDown } from 'lucide-react-native';
-import { useLanguage } from '@/hooks/useLanguage';
+import { 
+  PhoneOff, 
+  Mic, 
+  MicOff, 
+  User, 
+  Volume2, 
+  Phone, 
+  ChevronDown, 
+  Settings, 
+  FileAudio,
+  Wifi,
+  WifiOff,
+  Upload,
+  Cloud,
+  CloudOff
+} from 'lucide-react-native';
+import { useTranslation } from 'react-i18next';
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import ApiService from '../../services/apiService';
 
 // Call states
 const CALL_STATES = {
@@ -25,372 +42,314 @@ const CALL_STATES = {
   CONNECTED: 'connected'
 };
 
+// Backend Configuration
+const BACKEND_CONFIG = {
+  DEVELOPMENT_URL: 'http://localhost:8000',  // Your local backend
+  PRODUCTION_URL: 'https://your-api.com',    // Your production backend
+  get CURRENT_URL() {
+    return __DEV__ ? this.DEVELOPMENT_URL : this.PRODUCTION_URL;
+  }
+};
+
+interface CallRecording {
+  id: string;
+  filename: string;
+  uri: string;
+  backendId?: string;
+  duration: number;
+  timestamp: number;
+  size: number;
+  language: string;
+  format: 'm4a' | 'mp3';
+  uploadStatus: 'pending' | 'uploading' | 'uploaded' | 'failed';
+  backendUrl?: string;
+}
+
 export default function CallScreen() {
   const { colors } = useTheme();
-  const { t } = useLanguage();
-  const { availableLanguages, currentLanguage } = useLanguage();
+  const { t, i18n } = useTranslation();
   const insets = useSafeAreaInsets();
+  
+  // API Service instance
+  const [apiService] = useState(() => new ApiService(BACKEND_CONFIG.CURRENT_URL));
+  
+  // Call state
   const [callDuration, setCallDuration] = useState(0);
   const [callState, setCallState] = useState(CALL_STATES.IDLE);
   const [isMuted, setIsMuted] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [callStatus, setCallStatus] = useState(t('call.ready') || 'Ready to call');
+  const [callStatus, setCallStatus] = useState('Ready to call');
   const [pulseAnim] = useState(new Animated.Value(1));
-  const [callLanguage, setCallLanguage] = useState<string>(currentLanguage);
+  const [callLanguage, setCallLanguage] = useState<string>(i18n.language);
   const [langOpen, setLangOpen] = useState(false);
-  const [isTalking, setIsTalking] = useState(false);
-  const [talkRecording, setTalkRecording] = useState<Audio.Recording | null>(null);
-  const [talkRecordingUri, setTalkRecordingUri] = useState<string | null>(null);
+  
+  // Recording state
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [recordingUri, setRecordingUri] = useState<string | null>(null);
-  const [suspendMainRecording, setSuspendMainRecording] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [autoRecord, setAutoRecord] = useState(true);
+  const [savedRecordings, setSavedRecordings] = useState<CallRecording[]>([]);
+  
+  // Backend connection state
+  const [backendConnected, setBackendConnected] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
 
-  const styles = StyleSheet.create({
-    container: {
-      flex: 1,
-      backgroundColor: colors.background,
-    },
-    safeArea: {
-      flex: 1,
-    },
-    callHeader: {
-      alignItems: 'center',
-      paddingVertical: 60,
-    },
-    headerControls: {
-      position: 'absolute',
-      right: 20,
-      top: 12 + insets.top,
-      alignItems: 'flex-end',
-      zIndex: 1000,
-      elevation: 10,
-    },
-    dropdownTrigger: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.background,
-    },
-    dropdownLabel: {
-      color: colors.text,
-      fontSize: 11,
-      marginRight: 6,
-      maxWidth: 120,
-    },
-    dropdownMenu: {
-      position: 'absolute',
-      right: 0,
-      top: 30,
-      minWidth: 180,
-      marginTop: 6,
-      borderRadius: 10,
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-      overflow: 'hidden',
-      paddingVertical: 4,
-      zIndex: 1001,
-      elevation: 12,
-    },
-    dropdownItem: {
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    dropdownItemText: {
-      color: colors.text,
-      fontSize: 12,
-      includeFontPadding: false,
-      maxWidth: 160,
-      flexShrink: 1,
-    },
-    languageRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      flexShrink: 1,
-      maxWidth: 240,
-    },
-    languageFlag: {
-      fontSize: 14,
-    },
-    languageName: {
-      marginLeft: 8,
-      color: colors.text,
-      fontSize: 12,
-      lineHeight: 16,
-      includeFontPadding: false,
-      flexShrink: 1,
-    },
-    avatar: {
-      width: 200,
-      height: 200,
-      borderRadius: 100,
-      backgroundColor: colors.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 20,
-      shadowColor: '#000',
-      shadowOffset: {
-        width: 0,
-        height: 4,
-      },
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
-      elevation: 8,
-    },
-    callerName: {
-      fontSize: 24,
-      fontWeight: 'bold',
-      color: colors.text,
-      marginBottom: 8,
-    },
-    callStatus: {
-      fontSize: 16,
-      color: colors.textSecondary,
-      marginBottom: 12,
-    },
-    callTimer: {
-      fontSize: 20,
-      fontWeight: '600',
-      color: colors.primary,
-    },
-    callContent: {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingHorizontal: 40,
-    },
-    listeningIndicator: {
-      alignItems: 'center',
-      marginBottom: 40,
-    },
-    listeningText: {
-      fontSize: 18,
-      color: colors.text,
-      marginBottom: 20,
-      textAlign: 'center',
-    },
-    waveform: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    waveBar: {
-      width: 4,
-      marginHorizontal: 2,
-      borderRadius: 2,
-      backgroundColor: colors.primary,
-    },
-    instructionText: {
-      fontSize: 16,
-      color: colors.textSecondary,
-      textAlign: 'center',
-      lineHeight: 24,
-      marginBottom: 40,
-    },
-    controlsContainer: {
-      flexDirection: 'row',
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingVertical: 40,
-      paddingHorizontal: 20,
-    },
-    controlButton: {
-      width: 64,
-      height: 64,
-      borderRadius: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginHorizontal: 20,
-      shadowColor: '#000',
-      shadowOffset: {
-        width: 0,
-        height: 2,
-      },
-      shadowOpacity: 0.2,
-      shadowRadius: 4,
-      elevation: 4,
-    },
-    muteButton: {
-      backgroundColor: isMuted ? colors.error : colors.textSecondary,
-    },
-    endCallButton: {
-      backgroundColor: colors.error,
-      width: 72,
-      height: 72,
-      borderRadius: 36,
-    },
-    startCallButton: {
-      backgroundColor: '#4CAF50',
-      width: 72,
-      height: 72,
-      borderRadius: 36,
-    },
-    reconnectButton: {
-      backgroundColor: '#FF9800',
-      width: 72,
-      height: 72,
-      borderRadius: 36,
-    },
-    speakerButton: {
-      backgroundColor: colors.primary,
-    },
-    talkButton: {
-      backgroundColor: isTalking ? colors.error : colors.primary,
-    },
-    pulseAnimation: {
-      position: 'absolute',
-      width: 200,
-      height: 200,
-      borderRadius: 100,
-      borderWidth: 3,
-      borderColor: colors.primary,
-      opacity: 0.3,
-    },
-    userInfoContainer: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 16,
-    },
-    userAvatar: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      backgroundColor: colors.surface,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 12,
-    },
-    userName: {
-      fontSize: 18,
-      fontWeight: 'bold',
-      color: colors.text,
-    },
-    userLocation: {
-      fontSize: 14,
-      color: colors.textSecondary,
-    },
-    reconnectText: {
-      fontSize: 14,
-      color: '#FF9800',
-      textAlign: 'center',
-      marginTop: 8,
-    },
-    disabledButton: {
-      opacity: 0.5,
-    },
-  });
+  // Available languages
+  const availableLanguages = [
+    { code: 'en', name: 'English', flag: '🇺🇸' },
+    { code: 'hi', name: 'हिंदी', flag: '🇮🇳' },
+    { code: 'te', name: 'తెలుగు', flag: '🇮🇳' },
+    { code: 'ta', name: 'தமிழ்', flag: '🇮🇳' },
+    { code: 'ml', name: 'മലയാളം', flag: '🇮🇳' },
+    { code: 'kn', name: 'ಕನ್ನಡ', flag: '🇮🇳' },
+    { code: 'bn', name: 'বাংলা', flag: '🇧🇩' },
+    { code: 'pa', name: 'ਪੰਜਾਬੀ', flag: '🇮🇳' },
+  ];
 
-  // Update call status based on state
+  // Check backend connection periodically
   useEffect(() => {
-    switch (callState) {
-      case CALL_STATES.IDLE:
-        setCallStatus(t('call.ready') || 'Ready to call');
-        break;
-      case CALL_STATES.CONNECTING:
-        setCallStatus(t('call.connecting') || 'Connecting...');
-        break;
-      case CALL_STATES.CONNECTED:
-        setCallStatus(t('call.connected') || 'Connected');
-        break;
+    checkBackendConnection();
+    const interval = setInterval(checkBackendConnection, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load settings on mount
+  useEffect(() => {
+    loadRecordingSettings();
+    loadSavedRecordings();
+  }, []);
+
+  // Auto-start recording when call connects
+  useEffect(() => {
+    if (callState === CALL_STATES.CONNECTED && autoRecord && !isRecording) {
+      startRecording();
     }
-  }, [callState]);
-
-  // Handle call connection
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    
-    if (callState === CALL_STATES.CONNECTING) {
-      timer = setTimeout(() => {
-        setCallState(CALL_STATES.CONNECTED);
-      }, 2000); // 2 seconds connection time
+    if (callState === CALL_STATES.IDLE && isRecording) {
+      stopRecording();
     }
+  }, [callState, autoRecord]);
 
-    return () => clearTimeout(timer);
-  }, [callState]);
+  const checkBackendConnection = async () => {
+    const connected = await apiService.checkConnection();
+    setBackendConnected(connected);
+  };
 
-  // Start/stop audio recording based on call connection state
-  useEffect(() => {
-    const run = async () => {
-      try {
-        if (callState === CALL_STATES.CONNECTED && !recording && !suspendMainRecording) {
-          const perm = await Audio.requestPermissionsAsync();
-          if (perm.status !== 'granted') {
-            Alert.alert('Microphone Permission', 'Permission to access microphone is required to record.');
-            return;
-          }
-          await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-          const { recording: rec } = await Audio.Recording.createAsync(
-            Audio.RecordingOptionsPresets.HIGH_QUALITY
-          );
-          setRecording(rec);
-          setRecordingUri(null);
-        }
-        if (callState !== CALL_STATES.CONNECTED && recording) {
-          await stopRecording();
-        }
-      } catch (e) {
-        console.log('Recording lifecycle error', e);
-      }
-    };
-    run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callState, suspendMainRecording]);
-
-  const stopRecording = async () => {
+  const uploadToBackend = async (recordingData: CallRecording): Promise<boolean> => {
     try {
-      if (recording) {
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
-        setRecording(null);
-        if (uri) setRecordingUri(uri);
+      setUploadStatus('uploading');
+      setUploadProgress(0);
+
+      const uploadData = {
+        file: {
+          uri: recordingData.uri,
+          name: recordingData.filename,
+          type: 'audio/mp4',
+        },
+        metadata: {
+          userId: 'user_123', // Replace with actual user ID from your auth system
+          callId: recordingData.id,
+          duration: recordingData.duration,
+          language: recordingData.language,
+          timestamp: recordingData.timestamp,
+          deviceInfo: {
+            platform: Platform.OS,
+            version: Platform.Version,
+          }
+        }
+      };
+
+      const response = await apiService.uploadRecording(
+        uploadData,
+        (progress) => {
+          setUploadProgress(progress.percentage);
+        }
+      );
+
+      if (response.success) {
+        setUploadStatus('success');
+        console.log('Upload successful:', response.data);
+        
+        // Update recording with backend details
+        const updatedRecording = {
+          ...recordingData,
+          uploadStatus: 'uploaded' as const,
+          backendId: response.data?.id,
+          backendUrl: response.data?.url,
+        };
+        
+        await updateRecordingInStorage(updatedRecording);
+        return true;
+      } else {
+        throw new Error(response.error || 'Upload failed');
       }
-    } catch (e) {
-      console.log('stopRecording error', e);
+
+    } catch (error: any) {
+      console.log('Backend upload failed:', error);
+      setUploadStatus('error');
+      
+      // Update recording status to failed
+      const failedRecording = {
+        ...recordingData,
+        uploadStatus: 'failed' as const,
+      };
+      await updateRecordingInStorage(failedRecording);
+      
+      return false;
+    } finally {
+      // Reset upload UI after 3 seconds
+      setTimeout(() => {
+        setUploadStatus('idle');
+        setUploadProgress(0);
+      }, 3000);
     }
   };
 
-  // Call duration timer
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (callState === CALL_STATES.CONNECTED) {
-      interval = setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
+  const updateRecordingInStorage = async (updatedRecording: CallRecording) => {
+    try {
+      const updatedRecordings = savedRecordings.map(r => 
+        r.id === updatedRecording.id ? updatedRecording : r
+      );
+      setSavedRecordings(updatedRecordings);
+      await AsyncStorage.setItem('savedRecordings', JSON.stringify(updatedRecordings));
+    } catch (error) {
+      console.log('Failed to update recording in storage:', error);
     }
-    return () => clearInterval(interval);
-  }, [callState]);
+  };
 
-  // Pulse animation for avatar
-  useEffect(() => {
-    const pulse = () => {
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        }),
-      ]).start(() => pulse());
-    };
+  const requestPermissions = async () => {
+    try {
+      const audioPermission = await Audio.requestPermissionsAsync();
+      
+      if (audioPermission.status !== 'granted') {
+        Alert.alert(
+          'Microphone Permission Required',
+          'Permission to access microphone is required to record calls.',
+          [{ text: 'OK' }]
+        );
+        return false;
+      }
 
-    if (callState === CALL_STATES.CONNECTED) {
-      pulse();
+      return true;
+    } catch (error) {
+      console.log('Permission request error:', error);
+      return false;
     }
-  }, [callState, pulseAnim]);
+  };
+
+  const startRecording = async () => {
+    try {
+      const hasPermissions = await requestPermissions();
+      if (!hasPermissions) return;
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+      
+      setRecording(newRecording);
+      setIsRecording(true);
+      setRecordingUri(null);
+
+      console.log('Recording started');
+    } catch (error) {
+      console.log('Failed to start recording:', error);
+      Alert.alert('Recording Error', 'Failed to start recording. Please try again.');
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      if (!recording) return;
+
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+      setIsRecording(false);
+
+      if (uri) {
+        setRecordingUri(uri);
+        await saveRecording(uri);
+      }
+
+      console.log('Recording stopped');
+    } catch (error) {
+      console.log('Failed to stop recording:', error);
+      Alert.alert('Recording Error', 'Failed to stop recording.');
+    }
+  };
+
+  const saveRecording = async (uri: string) => {
+    try {
+      const fileInfo = await FileSystem.getInfoAsync(uri);
+      if (!fileInfo.exists) {
+        throw new Error('Recording file does not exist');
+      }
+
+      // Generate filename with timestamp and language
+      const timestamp = Date.now();
+      const date = new Date(timestamp);
+      const dateStr = date.toISOString().split('T')[0];
+      const timeStr = date.toTimeString().split(' ')[0].replace(/:/g, '-');
+      const filename = `call_${dateStr}_${timeStr}_${callLanguage}.m4a`;
+
+      // Always save locally first
+      const recordingsDir = `${FileSystem.documentDirectory}call_recordings/`;
+      const dirInfo = await FileSystem.getInfoAsync(recordingsDir);
+      if (!dirInfo.exists) {
+        await FileSystem.makeDirectoryAsync(recordingsDir, { intermediates: true });
+      }
+
+      const localUri = `${recordingsDir}${filename}`;
+      await FileSystem.copyAsync({
+        from: uri,
+        to: localUri,
+      });
+
+      // Create recording metadata
+      const recordingData: CallRecording = {
+        id: timestamp.toString(),
+        filename,
+        uri: localUri,
+        duration: callDuration,
+        timestamp,
+        size: fileInfo.size || 0,
+        language: callLanguage,
+        format: 'm4a',
+        uploadStatus: 'pending',
+      };
+
+      // Save to local storage
+      await saveToPersistentStorage(recordingData);
+
+      // Try to upload to backend if connected
+      if (backendConnected) {
+        const uploaded = await uploadToBackend(recordingData);
+        
+        Alert.alert(
+          'Recording Saved',
+          `Recording saved ${uploaded ? 'and uploaded to server' : 'locally'}!\nDuration: ${formatTime(callDuration)}\nLanguage: ${availableLanguages.find(l => l.code === callLanguage)?.name}`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert(
+          'Recording Saved Locally',
+          `Recording saved to device. Will upload when server is available.\nDuration: ${formatTime(callDuration)}`,
+          [{ text: 'OK' }]
+        );
+      }
+
+    } catch (error) {
+      console.log('Failed to save recording:', error);
+      Alert.alert('Save Error', 'Failed to save recording.');
+    }
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -398,400 +357,150 @@ export default function CallScreen() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const startCall = () => {
-    setCallState(CALL_STATES.CONNECTING);
-    setIsMuted(false);
-  };
-
-  const resetCall = () => {
-    setCallState(CALL_STATES.IDLE);
-    setCallDuration(0);
-    setIsMuted(false);
-    setIsListening(false);
-  };
-
-  const handleMute = () => {
-    if (callState !== CALL_STATES.CONNECTED) return;
-    
-    setIsMuted(!isMuted);
-    Alert.alert(
-      isMuted ? (t('call.micOnTitle') || 'Microphone On') : (t('call.micOffTitle') || 'Microphone Off'),
-      isMuted ? (t('call.micOnMsg') || 'You can now speak to the assistant') : (t('call.micOffMsg') || 'Your microphone is muted')
-    );
-  };
-
-  const handleSpeaker = () => {
-    if (callState !== CALL_STATES.CONNECTED) return;
-    Alert.alert(t('call.speakerTitle') || 'Speaker', t('call.speakerMsg') || 'Speaker mode toggled');
-  };
-
-  const startListening = () => {
-    if (callState !== CALL_STATES.CONNECTED) return;
-    
-    setIsListening(true);
-    setTimeout(() => {
-      setIsListening(false);
-      Alert.alert(
-        t('call.voiceRecognizedTitle') || 'Voice Recognized',
-        t('call.voiceRecognizedMsg') || 'Thank you for your question. The assistant is processing your request...',
-        [
-          {
-            text: t('common.ok') || 'OK',
-            onPress: () => {
-              setTimeout(() => {
-                Alert.alert(
-                  t('call.assistantResponseTitle') || 'Assistant Response',
-                  t('call.assistantResponseMsg') || 'Based on your question about crop diseases, I recommend checking for common symptoms like yellowing leaves or spots. Would you like specific treatment recommendations?'
-                );
-              }, 1500);
-            }
-          }
-        ]
-      );
-    }, 3000);
-  };
-
-  const endCall = () => {
-    if (callState === CALL_STATES.IDLE) return;
-    
-    Alert.alert(
-      "End Call",
-      "Are you sure you want to end this call?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "End Call", 
-          style: "destructive",
-          onPress: async () => {
-            if (isTalking) {
-              await stopTalkRecording();
-            }
-            await stopRecording();
-            await exportAndShareRecording();
-            resetCall();
-          }
-        }
-      ]
-    );
-  };
-
-  const startTalkRecording = async () => {
-    if (callState !== CALL_STATES.CONNECTED) return;
+  const saveToPersistentStorage = async (recording: CallRecording) => {
     try {
-      // Suspend the background/main recording while user actively talks
-      setSuspendMainRecording(true);
-      if (recording) {
-        await stopRecording();
-      }
-      const perm = await Audio.requestPermissionsAsync();
-      if (perm.status !== 'granted') {
-        Alert.alert('Microphone Permission', 'Permission to access microphone is required to record.');
-        setSuspendMainRecording(false);
-        return;
-      }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording: talkRec } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      setTalkRecording(talkRec);
-      setTalkRecordingUri(null);
-      setIsTalking(true);
-    } catch (e) {
-      console.log('startTalkRecording error', e);
-      setSuspendMainRecording(false);
+      const updatedRecordings = [...savedRecordings, recording];
+      setSavedRecordings(updatedRecordings);
+      await AsyncStorage.setItem('savedRecordings', JSON.stringify(updatedRecordings));
+    } catch (error) {
+      console.log('Error saving to persistent storage:', error);
     }
   };
 
-  const stopTalkRecording = async () => {
+  const loadRecordingSettings = async () => {
     try {
-      if (talkRecording) {
-        await talkRecording.stopAndUnloadAsync();
-        const uri = talkRecording.getURI();
-        setTalkRecording(null);
-        if (uri) {
-          setTalkRecordingUri(uri);
-          await convertTalkToMp3(uri);
-        }
+      const autoRecordSetting = await AsyncStorage.getItem('autoRecord');
+      if (autoRecordSetting !== null) {
+        setAutoRecord(JSON.parse(autoRecordSetting));
       }
-    } catch (e) {
-      console.log('stopTalkRecording error', e);
-    } finally {
-      setIsTalking(false);
-      // Resume main/background recording if call still active
-      setSuspendMainRecording(false);
-      if (callState === CALL_STATES.CONNECTED && !recording) {
-        try {
-          await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-          const { recording: rec } = await Audio.Recording.createAsync(
-            Audio.RecordingOptionsPresets.HIGH_QUALITY
-          );
-          setRecording(rec);
-          setRecordingUri(null);
-        } catch (e) {
-          console.log('resume main recording error', e);
-        }
-      }
+    } catch (error) {
+      console.log('Error loading recording settings:', error);
     }
   };
 
-  const convertTalkToMp3 = async (filePath: string) => {
+  const loadSavedRecordings = async () => {
     try {
-      const backendUrl = 'http://127.0.0.1:8000/convert';
-      const filename = `talk_${Date.now()}.m4a`;
-      const form = new FormData();
-      // @ts-ignore RN FormData type
-      form.append('file', {
-        uri: filePath,
-        name: filename,
-        type: 'audio/mp4',
-      });
-
-      const res = await fetch(backendUrl, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-        },
-        body: form as any,
-      });
-      if (!res.ok) {
-        throw new Error(`Upload failed: ${res.status}`);
+      const recordings = await AsyncStorage.getItem('savedRecordings');
+      if (recordings) {
+        setSavedRecordings(JSON.parse(recordings));
       }
-      const json = await res.json();
-      const mp3B64 = json.base64 as string;
-      const mp3Name = json.filename as string || `talk_${Date.now()}.mp3`;
-      const mp3Path = `${FileSystem.documentDirectory}talk_recordings/${mp3Name}`;
-      await FileSystem.writeAsStringAsync(mp3Path, mp3B64, { encoding: FileSystem.EncodingType.Base64 });
-      Alert.alert('MP3 Saved', `Talk recording saved as MP3 at: ${mp3Path}`);
-    } catch (e) {
-      console.log('convertTalkToMp3 error', e);
-      Alert.alert('Conversion Failed', 'Could not convert to MP3. Please ensure the backend is running.');
+    } catch (error) {
+      console.log('Error loading saved recordings:', error);
     }
   };
 
-  const toggleTalk = async () => {
-    if (callState !== CALL_STATES.CONNECTED) return;
-    if (isTalking) {
-      await stopTalkRecording();
-    } else {
-      await startTalkRecording();
-    }
-  };
+  // ... (rest of your existing functions)
 
-  const exportAndShareRecording = async () => {
-    try {
-      if (!recordingUri) return;
-      const wavPath = `${FileSystem.cacheDirectory}call_recording_${Date.now()}.wav`;
-      await FileSystem.copyAsync({ from: recordingUri, to: wavPath });
-      Alert.alert('Recording Saved', `Saved at: ${wavPath}`);
-    } catch (e) {
-      console.log('export/share error', e);
-    }
-  };
-
-  const renderWaveform = () => {
-    const bars = Array.from({ length: 5 }, (_, i) => (
-      <Animated.View
-        key={i}
-        style={[
-          styles.waveBar,
-          {
-            height: isListening ? Math.random() * 30 + 10 : 5,
-          }
-        ]}
-      />
-    ));
-    return <View style={styles.waveform}>{bars}</View>;
-  };
-
-  const renderMainButton = () => {
-    switch (callState) {
-      case CALL_STATES.IDLE:
-        return (
-          <TouchableOpacity
-            style={[styles.controlButton, styles.startCallButton]}
-            onPress={startCall}
-          >
-            <Phone size={28} color="#FFFFFF" />
-          </TouchableOpacity>
-        );
-      
-      case CALL_STATES.CONNECTING:
-        return (
-          <TouchableOpacity
-            style={[styles.controlButton, styles.endCallButton]}
-            onPress={() => resetCall()}
-          >
-            <PhoneOff size={28} color="#FFFFFF" />
-          </TouchableOpacity>
-        );
-      
-      default:
-        return (
-          <TouchableOpacity
-            style={[styles.controlButton, styles.endCallButton]}
-            onPress={endCall}
-          >
-            <PhoneOff size={28} color="#FFFFFF" />
-          </TouchableOpacity>
-        );
-    }
-  };
-
-  const getInstructionText = () => {
-    switch (callState) {
-      case CALL_STATES.IDLE:
-        return t('call.instructionIdle') || 'Tap the call button to connect with the Farmer Helpline assistant';
-      case CALL_STATES.CONNECTING:
-        return t('call.instructionConnecting') || 'Connecting you to the Farmer Helpline assistant...';
-      case CALL_STATES.CONNECTED:
-        return t('call.instructionConnected') || 'Connected! You can now speak with the assistant.';
-      default:
-        return "";
-    }
-  };
-
-  const isCallActive = callState === CALL_STATES.CONNECTED || callState === CALL_STATES.CONNECTING;
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    backendStatus: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      position: 'absolute',
+      top: 50,
+      right: 20,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+      backgroundColor: colors.surface,
+    },
+    statusText: {
+      fontSize: 10,
+      marginLeft: 4,
+    },
+    uploadProgress: {
+      position: 'absolute',
+      bottom: 100,
+      left: 20,
+      right: 20,
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    progressInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+    },
+    progressText: {
+      fontSize: 12,
+      marginLeft: 8,
+      color: colors.text,
+    },
+    progressBar: {
+      height: 4,
+      backgroundColor: colors.border,
+      borderRadius: 2,
+      overflow: 'hidden',
+    },
+    progressFill: {
+      height: '100%',
+      backgroundColor: colors.primary,
+      borderRadius: 2,
+    },
+    settingsButton: {
+      padding: 6,
+      borderRadius: 12,
+      backgroundColor: colors.background,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+  });
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={{ flex: 1 }}>
       <View style={styles.container}>
-        <View style={styles.callHeader}>
-          <View style={styles.headerControls}>
-            <TouchableOpacity
-              onPress={() => setLangOpen(!langOpen)}
-              style={styles.dropdownTrigger}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.dropdownLabel}>
-                {availableLanguages.find(l => l.code === callLanguage)?.name || callLanguage.toUpperCase()}
-              </Text>
-              <ChevronDown size={14} color={colors.text} />
-            </TouchableOpacity>
-            {langOpen && (
-              <>
-              <TouchableOpacity
-                activeOpacity={1}
-                onPress={() => setLangOpen(false)}
-                style={{ position: 'absolute', left: -9999, right: -9999, top: -9999, bottom: -9999 }}
-              />
-              <View style={styles.dropdownMenu}>
-                {availableLanguages.map((lang, idx) => (
-                  <TouchableOpacity
-                    key={lang.code}
-                    onPress={() => { setCallLanguage(lang.code); setLangOpen(false); }}
-                    style={[styles.dropdownItem, idx === availableLanguages.length - 1 && { borderBottomWidth: 0 }]}
-                  >
-                    <View style={styles.languageRow}>
-                      <Text style={styles.languageFlag}>{lang.flag}</Text>
-                      <Text style={styles.languageName} numberOfLines={1}>{lang.name}</Text>
-                    </View>
-                    {callLanguage === lang.code && <Text style={styles.dropdownItemText}>✓</Text>}
-                  </TouchableOpacity>
-                ))}
-              </View>
-              </>
-            )}
-          </View>
-          <View style={{ position: 'relative' }}>
-            {callState === CALL_STATES.CONNECTED && (
-              <Animated.View
-                style={[
-                  styles.pulseAnimation,
-                  {
-                    transform: [{ scale: pulseAnim }],
-                  }
-                ]}
-              />
-            )}
-            <View style={styles.avatar}>
-              <User size={60} color="#FFFFFF" />
-            </View>
-          </View>
-          <Text style={styles.callerName}>{t('call.botName') || 'Farmer Helpline Bot'}</Text>
-          <Text style={styles.callStatus}>{callStatus}</Text>
-          {callState === CALL_STATES.CONNECTED && (
-            <Text style={styles.callTimer}>{formatTime(callDuration)}</Text>
-          )}
-        </View>
-
-        <View style={styles.callContent}>
-          {callState === CALL_STATES.CONNECTED ? (
-            <View style={styles.listeningIndicator}>
-              <Text style={styles.listeningText}>
-                {isListening ? (t('call.listening') || 'Listening...') : (t('call.tapToSpeak') || 'Tap to speak')}
-              </Text>
-              {renderWaveform()}
-            </View>
+        {/* Backend Status Indicator */}
+        <View style={styles.backendStatus}>
+          {backendConnected ? (
+            <Cloud size={16} color="#4CAF50" />
           ) : (
-            <Text style={styles.instructionText}>
-              {getInstructionText()}
-            </Text>
+            <CloudOff size={16} color="#FF4444" />
           )}
+          <Text style={[styles.statusText, { color: backendConnected ? '#4CAF50' : '#FF4444' }]}>
+            {backendConnected ? 'Server Online' : 'Server Offline'}
+          </Text>
         </View>
 
-        <View style={styles.userInfoContainer}>
-          <View style={styles.userAvatar}>
-            <User size={40} color={colors.primary} />
-          </View>
-          <View>
-            <Text style={styles.userName}>Ravi Kumar</Text>
-            <Text style={styles.userLocation}>Andhra Pradesh, India</Text>
-          </View>
-        </View>
-
-        <View style={styles.controlsContainer}>
-          {isCallActive && (
-            <TouchableOpacity
-              style={[
-                styles.controlButton, 
-                styles.muteButton,
-                callState !== CALL_STATES.CONNECTED && styles.disabledButton
-              ]}
-              onPress={handleMute}
-              disabled={callState !== CALL_STATES.CONNECTED}
-            >
-              {isMuted ? (
-                <MicOff size={24} color="#fff" />
-              ) : (
-                <Mic size={24} color="#fff" />
+        {/* Upload Progress Indicator */}
+        {uploadStatus !== 'idle' && (
+          <View style={styles.uploadProgress}>
+            <View style={styles.progressInfo}>
+              {uploadStatus === 'uploading' && (
+                <>
+                  <Upload size={16} color={colors.primary} />
+                  <Text style={styles.progressText}>Uploading... {uploadProgress}%</Text>
+                </>
               )}
-            </TouchableOpacity>
-          )}
-          
-          {renderMainButton()}
-
-          {isCallActive && (
-            <TouchableOpacity
-              style={[
-                styles.controlButton, 
-                styles.talkButton,
-                callState !== CALL_STATES.CONNECTED && styles.disabledButton
-              ]}
-              onPress={toggleTalk}
-              disabled={callState !== CALL_STATES.CONNECTED}
-            >
-              {isTalking ? (
-                <MicOff size={24} color="#FFFFFF" />
-              ) : (
-                <Mic size={24} color="#FFFFFF" />
+              {uploadStatus === 'success' && (
+                <>
+                  <Cloud size={16} color="#4CAF50" />
+                  <Text style={[styles.progressText, { color: '#4CAF50' }]}>Upload Complete!</Text>
+                </>
               )}
-            </TouchableOpacity>
-          )}
+              {uploadStatus === 'error' && (
+                <>
+                  <CloudOff size={16} color="#FF4444" />
+                  <Text style={[styles.progressText, { color: '#FF4444' }]}>Upload Failed</Text>
+                </>
+              )}
+            </View>
+            {uploadStatus === 'uploading' && (
+              <View style={styles.progressBar}>
+                <View style={[styles.progressFill, { width: `${uploadProgress}%` }]} />
+              </View>
+            )}
+          </View>
+        )}
 
-          {isCallActive && (
-            <TouchableOpacity
-              style={[
-                styles.controlButton, 
-                styles.speakerButton,
-                callState !== CALL_STATES.CONNECTED && styles.disabledButton
-              ]}
-              onPress={handleSpeaker}
-              disabled={callState !== CALL_STATES.CONNECTED}
-            >
-              <Volume2 size={24} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
-        </View>
+        {/* Your existing call interface */}
+        {/* Add all your existing JSX here */}
+        
       </View>
     </SafeAreaView>
   );
